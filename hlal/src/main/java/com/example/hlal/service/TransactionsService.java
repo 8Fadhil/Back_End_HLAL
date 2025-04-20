@@ -10,6 +10,7 @@ import com.example.hlal.repository.WalletsRepository;
 import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
@@ -115,14 +116,30 @@ public class TransactionsService {
         try {
             List<Transactions> allTransactions = transactionsRepository.findAll();
 
+            if (allTransactions == null || allTransactions.isEmpty()) {
+                response.put("status", false);
+                response.put("code", 404);
+                response.put("message", "Data tidak ditemukan.");
+                response.put("data", Collections.emptyList());
+                return response;
+            }
+
             // Filter by walletId
-            allTransactions = allTransactions.stream()
-                    .filter(tx -> tx.getWallet().getId().equals(walletId))
+            List<Transactions> filteredByWallet = allTransactions.stream()
+                    .filter(tx -> tx.getWallet() != null && tx.getWallet().getId().equals(walletId))
                     .collect(Collectors.toList());
+
+            if (filteredByWallet.isEmpty()) {
+                response.put("status", false);
+                response.put("code", 404);
+                response.put("message", "Data tidak ditemukan untuk walletId: " + walletId);
+                response.put("data", Collections.emptyList());
+                return response;
+            }
 
             // Filter keyword
             String lowerKeyword = keyword != null ? keyword.toLowerCase() : null;
-            List<Transactions> filtered = allTransactions.stream().filter(tx -> {
+            List<Transactions> filtered = filteredByWallet.stream().filter(tx -> {
                 if (lowerKeyword == null || lowerKeyword.isEmpty()) return true;
 
                 String description = Optional.ofNullable(tx.getDescription()).orElse("").toLowerCase();
@@ -140,10 +157,24 @@ public class TransactionsService {
                         recipient.contains(lowerKeyword);
             }).collect(Collectors.toList());
 
+            if (filtered.isEmpty()) {
+                response.put("status", false);
+                response.put("code", 404);
+                response.put("message", "Data tidak ditemukan berdasarkan pencarian keyword.");
+                response.put("data", Collections.emptyList());
+                return response;
+            }
+
             // Sort
+            if (sortBy == null || sortBy.isEmpty()) sortBy = "date";
+            if (order == null || order.isEmpty()) order = "desc";
+
+            String finalSortBy = sortBy;
+
+            String finalOrder = order;
             filtered.sort((tx1, tx2) -> {
                 int result;
-                switch (sortBy.toLowerCase()) {
+                switch (finalSortBy.toLowerCase()) {
                     case "amount":
                         result = tx1.getAmount().compareTo(tx2.getAmount());
                         break;
@@ -168,26 +199,26 @@ public class TransactionsService {
                         result = tx1.getTransactionDate().compareTo(tx2.getTransactionDate());
                         break;
                 }
-                return "desc".equalsIgnoreCase(order) ? -result : result;
+                return "desc".equalsIgnoreCase(finalOrder) ? -result : result;
             });
 
             // Pagination
             int fromIndex = page * size;
             int toIndex = Math.min(fromIndex + size, filtered.size());
             if (fromIndex >= filtered.size()) {
-                response.put("status", true);
-                response.put("code", 201);
+                response.put("status", false);
+                response.put("code", 404);
+                response.put("message", "Data tidak ditemukan pada halaman tersebut.");
                 response.put("data", Collections.emptyList());
                 return response;
             }
 
             List<Transactions> paginated = filtered.subList(fromIndex, toIndex);
 
-            // Apply limit only if provided
+            // Limit
             if (limit != null && limit > 0 && limit < paginated.size()) {
                 paginated = paginated.subList(0, limit);
             }
-
 
             // Final response list
             List<Map<String, Object>> data = paginated.stream().map(tx -> {
@@ -195,7 +226,7 @@ public class TransactionsService {
 
                 String name = tx.getTransactionType().getId() == 1
                         ? tx.getWallet().getUsers().getFullname()
-                        : tx.getRecipientWallet() != null
+                        : tx.getRecipientWallet() != null && tx.getRecipientWallet().getUsers() != null
                         ? tx.getRecipientWallet().getUsers().getFullname()
                         : "-";
 
@@ -214,6 +245,7 @@ public class TransactionsService {
 
             response.put("status", true);
             response.put("code", 201);
+            response.put("message", "Data berhasil diambil.");
             response.put("totalData", filtered.size());
             response.put("data", data);
             return response;
@@ -221,9 +253,55 @@ public class TransactionsService {
         } catch (Exception e) {
             response.put("status", false);
             response.put("code", 500);
-            response.put("message", "Failed to get transactions: " + e.getMessage());
+            response.put("message", "Terjadi kesalahan: " + e.getMessage());
             return response;
         }
+    }
+
+    public Map<String, Object> getTransactionsByMonthAndYear(Long walletId, int month, int year) {
+        Map<String, Object> response = new LinkedHashMap<>();
+
+        try {
+            LocalDateTime startDate = LocalDateTime.of(year, month, 1, 0, 0);
+            LocalDateTime endDate = startDate.withDayOfMonth(startDate.toLocalDate().lengthOfMonth()).withHour(23).withMinute(59).withSecond(59);
+
+            List<Transactions> transactions = transactionsRepository.findByWalletIdAndTransactionDateBetween(walletId, startDate, endDate);
+
+            if (transactions == null || transactions.isEmpty()) {
+                response.put("status", false);
+                response.put("code", 404);
+                response.put("message", "Data tidak ditemukan");
+                response.put("totalData", 0);
+                response.put("data", Collections.emptyList());
+                return response;
+            }
+
+            List<TransactionsResponse> responseList = transactions.stream().map(tx -> {
+                TransactionsResponse res = new TransactionsResponse();
+                res.setTransactionId(tx.getId());
+                res.setTransactionType(tx.getTransactionType().getName());
+                res.setAmount(tx.getAmount());
+                res.setSender(tx.getWallet().getUsers().getFullname());
+                res.setRecipient(tx.getRecipientWallet() != null ? tx.getRecipientWallet().getUsers().getFullname() : null);
+                res.setDescription(tx.getDescription());
+                res.setTransactionDate(tx.getTransactionDate());
+                res.setTransactionDateFormatted(tx.getTransactionDate().format(DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm")));
+                return res;
+            }).collect(Collectors.toList());
+
+            response.put("status", true);
+            response.put("code", 200);
+            response.put("message", "Success get transactions by month and year");
+            response.put("totalData", responseList.size());
+            response.put("data", responseList);
+
+        } catch (Exception e) {
+            response.put("status", false);
+            response.put("code", 500);
+            response.put("message", "Error fetching transactions: " + e.getMessage());
+        }
+
+        return response;
     }
 
 

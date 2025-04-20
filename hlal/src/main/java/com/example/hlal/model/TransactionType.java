@@ -21,8 +21,4 @@ public class TransactionType {
     @Column(name = "name", length = 255)
     private String name;
 
-    @ManyToOne
-    @JoinColumn(name = "transaction_id")
-    private Transactions transaction;
-
 }

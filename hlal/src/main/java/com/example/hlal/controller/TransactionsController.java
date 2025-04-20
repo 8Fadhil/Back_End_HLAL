@@ -71,4 +71,23 @@ public class TransactionsController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
     }
+
+    @GetMapping("/by-month")
+    public ResponseEntity<Map<String, Object>> getTransactionsByMonthAndYear(
+            @RequestParam Long walletId,
+            @RequestParam int month,
+            @RequestParam int year
+    ) {
+        try {
+            Map<String, Object> result = transactionsService.getTransactionsByMonthAndYear(walletId, month, year);
+            int statusCode = (int) result.getOrDefault("code", 200);
+            return ResponseEntity.status(statusCode).body(result);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new LinkedHashMap<>();
+            errorResponse.put("status", false);
+            errorResponse.put("code", 500);
+            errorResponse.put("message", "Error fetching transactions: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
 }
